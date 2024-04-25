@@ -119,6 +119,48 @@ impl<T> LinkedList<T> {
         debug_assert!(node.next.is_none());
         Some(node.value)
     }
+
+    pub fn iter(&self) -> Cursor<'_, T> {
+        Cursor {
+            token: &self.token,
+            head_tail: self.head_tail.as_ref().map(|(head, tail)| (head, tail)),
+        }
+    }
+}
+
+pub struct Cursor<'a, T> {
+    token: &'a CellToken<Checked>,
+    head_tail: Option<(&'a Ptr<T>, &'a Ptr<T>)>,
+}
+
+impl<'a, T> Iterator for Cursor<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (head, tail) = self.head_tail?;
+
+        let head_node = head.get(self.token);
+        match head_node.next.as_ref() {
+            Some(next) if !StaticRc::ptr_eq(head, tail) => self.head_tail = Some((next, tail)),
+            _ => self.head_tail = None,
+        }
+
+        Some(&head_node.value)
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Cursor<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let (head, tail) = self.head_tail?;
+
+        let tail_node = tail.get(self.token);
+        match tail_node.prev.as_ref() {
+            Some(prev) if !StaticRc::ptr_eq(head, tail) => self.head_tail = Some((head, prev)),
+            _ => self.head_tail = None,
+        }
+
+        Some(&tail_node.value)
+    }
 }
 
 impl<T> Drop for LinkedList<T> {
@@ -187,6 +229,70 @@ mod tests {
         }
 
         assert_eq!(vec, [8, 7, 6, 5, 4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn iter() {
+        let mut ll = LinkedList::default();
+        ll.push_front(4);
+        ll.push_front(3);
+        ll.push_front(2);
+        ll.push_front(1);
+        ll.push_back(5);
+        ll.push_back(6);
+        ll.push_back(7);
+        ll.push_back(8);
+
+        let mut vec = vec![];
+        for x in ll.iter() {
+            vec.push(*x);
+        }
+
+        assert_eq!(vec, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn iter_back() {
+        let mut ll = LinkedList::default();
+        ll.push_front(4);
+        ll.push_front(3);
+        ll.push_front(2);
+        ll.push_front(1);
+        ll.push_back(5);
+        ll.push_back(6);
+        ll.push_back(7);
+        ll.push_back(8);
+
+        let mut vec = vec![];
+        for x in ll.iter().rev() {
+            vec.push(*x);
+        }
+
+        assert_eq!(vec, [8, 7, 6, 5, 4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn iter_middle() {
+        let mut ll = LinkedList::default();
+        ll.push_front(4);
+        ll.push_front(3);
+        ll.push_front(2);
+        ll.push_front(1);
+        ll.push_back(5);
+        ll.push_back(6);
+        ll.push_back(7);
+        ll.push_back(8);
+
+        let mut vec = vec![];
+        let mut iter = ll.iter();
+        for x in iter.by_ref().take(4) {
+            vec.push(*x);
+        }
+        for x in iter.rev() {
+            vec.push(*x);
+        }
+
+        assert_eq!(vec, [1, 2, 3, 4, 8, 7, 6, 5]);
     }
 
     struct CountDrop<'a>(&'a RefCell<usize>);
