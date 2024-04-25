@@ -83,21 +83,48 @@ impl<T> LinkedList<T> {
             }
         }
     }
+
+    pub fn pop_front(&mut self) -> Option<T> {
+        let (head, tail) = self.head_tail.take()?;
+
+        let prev = if let Some(next) = head.get_mut(&mut self.token).next.take() {
+            let prev = next.get_mut(&mut self.token).prev.take().unwrap();
+            self.head_tail = Some((next, tail));
+            prev
+        } else {
+            tail
+        };
+
+        let node = StaticRc::<_, 2, 2>::join(head, prev);
+        let node = StaticRc::into_inner(node).into_inner();
+        debug_assert!(node.next.is_none());
+        debug_assert!(node.prev.is_none());
+        Some(node.value)
+    }
+
+    pub fn pop_back(&mut self) -> Option<T> {
+        let (head, tail) = self.head_tail.take()?;
+
+        let next = if let Some(prev) = tail.get_mut(&mut self.token).prev.take() {
+            let next = prev.get_mut(&mut self.token).next.take().unwrap();
+            self.head_tail = Some((head, prev));
+            next
+        } else {
+            head
+        };
+
+        let node = StaticRc::<_, 2, 2>::join(next, tail);
+        let node = StaticRc::into_inner(node).into_inner();
+        debug_assert!(node.prev.is_none());
+        debug_assert!(node.next.is_none());
+        Some(node.value)
+    }
 }
 
 impl<T> Drop for LinkedList<T> {
     fn drop(&mut self) {
-        let Some((mut head, tail)) = self.head_tail.take() else {
-            return;
-        };
-        loop {
-            let Some(next) = head.get_mut(&mut self.token).next.take() else {
-                _ = StaticRc::<_, 2, 2>::join(head, tail);
-                return;
-            };
-            let prev = next.get_mut(&mut self.token).prev.take().unwrap();
-            _ = StaticRc::<_, 2, 2>::join(head, prev);
-            head = next;
+        while let Some(x) = self.pop_front() {
+            drop(x);
         }
     }
 }
@@ -120,6 +147,46 @@ mod tests {
         ll.push_back(7);
         ll.push_back(8);
         assert_eq!(format!("{ll:?}"), "[1, 2, 3, 4, 5, 6, 7, 8]");
+    }
+
+    #[test]
+    fn pop_front() {
+        let mut ll = LinkedList::default();
+        ll.push_front(4);
+        ll.push_front(3);
+        ll.push_front(2);
+        ll.push_front(1);
+        ll.push_back(5);
+        ll.push_back(6);
+        ll.push_back(7);
+        ll.push_back(8);
+
+        let mut vec = vec![];
+        while let Some(x) = ll.pop_front() {
+            vec.push(x);
+        }
+
+        assert_eq!(vec, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn pop_back() {
+        let mut ll = LinkedList::default();
+        ll.push_front(4);
+        ll.push_front(3);
+        ll.push_front(2);
+        ll.push_front(1);
+        ll.push_back(5);
+        ll.push_back(6);
+        ll.push_back(7);
+        ll.push_back(8);
+
+        let mut vec = vec![];
+        while let Some(x) = ll.pop_back() {
+            vec.push(x);
+        }
+
+        assert_eq!(vec, [8, 7, 6, 5, 4, 3, 2, 1]);
     }
 
     struct CountDrop<'a>(&'a RefCell<usize>);

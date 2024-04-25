@@ -40,6 +40,10 @@ impl<T, I: Id> Cell<T, I> {
         assert_eq!(self.id, token.id, "invalid id");
         unsafe { &mut *self.value.get() }
     }
+
+    pub fn into_inner(self) -> T {
+        self.value.into_inner()
+    }
 }
 
 /// A marker trait for any type that functions as an ID.
