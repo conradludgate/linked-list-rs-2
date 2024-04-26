@@ -32,7 +32,7 @@ impl<T: fmt::Debug> fmt::Debug for LinkedList<T> {
         let mut list = f.debug_list();
         let mut head = self.head_tail.as_ref().map(|(head, _)| head);
         while let Some(node) = head {
-            let node = node.get(&self.token);
+            let node = node.borrow(&self.token);
             list.entry(&node.value);
             head = node.next.as_ref();
         }
@@ -52,9 +52,9 @@ impl<T> LinkedList<T> {
         let (next, prev) = StaticRc::split::<1, 1>(rc);
         match self.head_tail.take() {
             Some((head, tail)) => {
-                debug_assert!(head.get(&self.token).prev.is_none());
-                head.get_mut(&mut self.token).prev = Some(prev);
-                next.get_mut(&mut self.token).next = Some(head);
+                debug_assert!(head.borrow(&self.token).prev.is_none());
+                head.borrow_mut(&mut self.token).prev = Some(prev);
+                next.borrow_mut(&mut self.token).next = Some(head);
                 self.head_tail = Some((next, tail));
             }
             None => {
@@ -73,9 +73,9 @@ impl<T> LinkedList<T> {
         let (next, prev) = StaticRc::split::<1, 1>(rc);
         match self.head_tail.take() {
             Some((head, tail)) => {
-                debug_assert!(tail.get(&self.token).next.is_none());
-                tail.get_mut(&mut self.token).next = Some(next);
-                prev.get_mut(&mut self.token).prev = Some(tail);
+                debug_assert!(tail.borrow(&self.token).next.is_none());
+                tail.borrow_mut(&mut self.token).next = Some(next);
+                prev.borrow_mut(&mut self.token).prev = Some(tail);
                 self.head_tail = Some((head, prev));
             }
             None => {
@@ -87,8 +87,8 @@ impl<T> LinkedList<T> {
     pub fn pop_front(&mut self) -> Option<T> {
         let (head, tail) = self.head_tail.take()?;
 
-        let prev = if let Some(next) = head.get_mut(&mut self.token).next.take() {
-            let prev = next.get_mut(&mut self.token).prev.take().unwrap();
+        let prev = if let Some(next) = head.borrow_mut(&mut self.token).next.take() {
+            let prev = next.borrow_mut(&mut self.token).prev.take().unwrap();
             self.head_tail = Some((next, tail));
             prev
         } else {
@@ -105,8 +105,8 @@ impl<T> LinkedList<T> {
     pub fn pop_back(&mut self) -> Option<T> {
         let (head, tail) = self.head_tail.take()?;
 
-        let next = if let Some(prev) = tail.get_mut(&mut self.token).prev.take() {
-            let next = prev.get_mut(&mut self.token).next.take().unwrap();
+        let next = if let Some(prev) = tail.borrow_mut(&mut self.token).prev.take() {
+            let next = prev.borrow_mut(&mut self.token).next.take().unwrap();
             self.head_tail = Some((head, prev));
             next
         } else {
@@ -139,7 +139,7 @@ impl<'a, T> Iterator for Cursor<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         let (head, tail) = self.head_tail?;
 
-        let head_node = head.get(self.token);
+        let head_node = head.borrow(self.token);
         match head_node.next.as_ref() {
             Some(next) if !StaticRc::ptr_eq(head, tail) => self.head_tail = Some((next, tail)),
             _ => self.head_tail = None,
@@ -153,7 +153,7 @@ impl<'a, T> DoubleEndedIterator for Cursor<'a, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let (head, tail) = self.head_tail?;
 
-        let tail_node = tail.get(self.token);
+        let tail_node = tail.borrow(self.token);
         match tail_node.prev.as_ref() {
             Some(prev) if !StaticRc::ptr_eq(head, tail) => self.head_tail = Some((head, prev)),
             _ => self.head_tail = None,

@@ -31,12 +31,12 @@ pub struct Cell<T, I: Id> {
 }
 
 impl<T, I: Id> Cell<T, I> {
-    pub fn get<'a>(&self, token: &'a CellToken<I>) -> &'a T {
+    pub fn borrow<'a>(&'a self, token: &'a CellToken<I>) -> &'a T {
         assert_eq!(self.id, token.id, "invalid id");
         unsafe { &*self.value.get() }
     }
 
-    pub fn get_mut<'a>(&self, token: &'a mut CellToken<I>) -> &'a mut T {
+    pub fn borrow_mut<'a>(&'a self, token: &'a mut CellToken<I>) -> &'a mut T {
         assert_eq!(self.id, token.id, "invalid id");
         unsafe { &mut *self.value.get() }
     }
@@ -44,6 +44,11 @@ impl<T, I: Id> Cell<T, I> {
     pub fn into_inner(self) -> T {
         self.value.into_inner()
     }
+
+    // pub fn trade(&self, old: &mut CellToken<I>, new: &mut CellToken<I>) {
+    //     assert_eq!(self.id, old.id, "invalid id");
+    //     self.id = new.id;
+    // }
 }
 
 /// A marker trait for any type that functions as an ID.
