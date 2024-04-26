@@ -1,15 +1,15 @@
 use core::fmt;
 
-use id::{Cell, CellToken, Checked};
+use id::{Cell, CellToken, DebugChecked};
 use static_rc::StaticRc;
 
 mod id;
 
-type Ptr<T> = StaticRc<Cell<Node<T>, Checked>, 1, 2>;
+type Ptr<T> = StaticRc<Cell<Node<T>, DebugChecked>, 1, 2>;
 
 pub struct LinkedList<T> {
     head_tail: Option<(Ptr<T>, Ptr<T>)>,
-    token: CellToken<Checked>,
+    token: CellToken<DebugChecked>,
 }
 
 struct Node<T> {
@@ -22,7 +22,7 @@ impl<T> Default for LinkedList<T> {
     fn default() -> Self {
         Self {
             head_tail: Default::default(),
-            token: CellToken::new(Checked::new()),
+            token: CellToken::new(unsafe { DebugChecked::new() }),
         }
     }
 }
@@ -48,7 +48,7 @@ impl<T> LinkedList<T> {
             prev: None,
             value,
         };
-        let rc = StaticRc::<Cell<Node<T>, Checked>, 2, 2>::new(self.token.cell(node));
+        let rc = StaticRc::<_, 2, 2>::new(self.token.cell(node));
         let (next, prev) = StaticRc::split::<1, 1>(rc);
         match self.head_tail.take() {
             Some((head, tail)) => {
@@ -69,7 +69,7 @@ impl<T> LinkedList<T> {
             prev: None,
             value,
         };
-        let rc = StaticRc::<Cell<Node<T>, Checked>, 2, 2>::new(self.token.cell(node));
+        let rc = StaticRc::<_, 2, 2>::new(self.token.cell(node));
         let (next, prev) = StaticRc::split::<1, 1>(rc);
         match self.head_tail.take() {
             Some((head, tail)) => {
@@ -95,7 +95,8 @@ impl<T> LinkedList<T> {
             tail
         };
 
-        let node = StaticRc::<_, 2, 2>::join(head, prev);
+        // SAFETY: head and prev point to the same node
+        let node = unsafe { StaticRc::<_, 2, 2>::join_unchecked(head, prev) };
         let node = StaticRc::into_inner(node).into_inner();
         debug_assert!(node.next.is_none());
         debug_assert!(node.prev.is_none());
@@ -113,7 +114,8 @@ impl<T> LinkedList<T> {
             head
         };
 
-        let node = StaticRc::<_, 2, 2>::join(next, tail);
+        // SAFETY: next and tail point to the same node
+        let node = unsafe { StaticRc::<_, 2, 2>::join_unchecked(next, tail) };
         let node = StaticRc::into_inner(node).into_inner();
         debug_assert!(node.prev.is_none());
         debug_assert!(node.next.is_none());
@@ -126,10 +128,17 @@ impl<T> LinkedList<T> {
             head_tail: self.head_tail.as_ref().map(|(head, tail)| (head, tail)),
         }
     }
+
+    pub fn iter_mut(&mut self) -> CursorMut<'_, T> {
+        CursorMut {
+            token: &mut self.token,
+            head_tail: self.head_tail.as_ref().map(|(head, tail)| (head, tail)),
+        }
+    }
 }
 
 pub struct Cursor<'a, T> {
-    token: &'a CellToken<Checked>,
+    token: &'a CellToken<DebugChecked>,
     head_tail: Option<(&'a Ptr<T>, &'a Ptr<T>)>,
 }
 
@@ -137,12 +146,11 @@ impl<'a, T> Iterator for Cursor<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (head, tail) = self.head_tail?;
+        let (head, tail) = self.head_tail.take()?;
 
         let head_node = head.borrow(self.token);
-        match head_node.next.as_ref() {
-            Some(next) if !StaticRc::ptr_eq(head, tail) => self.head_tail = Some((next, tail)),
-            _ => self.head_tail = None,
+        if !StaticRc::ptr_eq(head, tail) {
+            self.head_tail = head_node.next.as_ref().map(|next| (next, tail));
         }
 
         Some(&head_node.value)
@@ -151,15 +159,53 @@ impl<'a, T> Iterator for Cursor<'a, T> {
 
 impl<'a, T> DoubleEndedIterator for Cursor<'a, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        let (head, tail) = self.head_tail?;
+        let (head, tail) = self.head_tail.take()?;
 
         let tail_node = tail.borrow(self.token);
-        match tail_node.prev.as_ref() {
-            Some(prev) if !StaticRc::ptr_eq(head, tail) => self.head_tail = Some((head, prev)),
-            _ => self.head_tail = None,
+        if !StaticRc::ptr_eq(head, tail) {
+            self.head_tail = tail_node.prev.as_ref().map(|prev| (head, prev));
         }
 
         Some(&tail_node.value)
+    }
+}
+
+pub struct CursorMut<'a, T> {
+    token: &'a mut CellToken<DebugChecked>,
+    head_tail: Option<(&'a Ptr<T>, &'a Ptr<T>)>,
+}
+
+impl<'a, T> Iterator for CursorMut<'a, T> {
+    type Item = &'a mut T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (head, tail) = self.head_tail.take()?;
+
+        // SAFETY: head points to next so we cannot revisit this node
+        let this_node = unsafe { &mut *(self.token as *mut _) };
+
+        let head_node = head.borrow_mut(this_node);
+        if !StaticRc::ptr_eq(head, tail) {
+            self.head_tail = head_node.next.as_ref().map(|next| (next, tail));
+        }
+
+        Some(&mut head_node.value)
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for CursorMut<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let (head, tail) = self.head_tail.take()?;
+
+        // SAFETY: tail points to prev so we cannot revisit this node
+        let this_node = unsafe { &mut *(self.token as *mut _) };
+
+        let tail_node = head.borrow_mut(this_node);
+        if !StaticRc::ptr_eq(head, tail) {
+            self.head_tail = tail_node.prev.as_ref().map(|prev| (head, prev));
+        }
+
+        Some(&mut tail_node.value)
     }
 }
 
@@ -229,6 +275,56 @@ mod tests {
         }
 
         assert_eq!(vec, [8, 7, 6, 5, 4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn iter_mut() {
+        let mut ll = LinkedList::default();
+        ll.push_front(4);
+        ll.push_front(3);
+        ll.push_front(2);
+        ll.push_front(1);
+        ll.push_back(5);
+        ll.push_back(6);
+        ll.push_back(7);
+        ll.push_back(8);
+
+        let mut vec = vec![];
+        for x in ll.iter_mut() {
+            vec.push(x);
+        }
+
+        assert_eq!(
+            vec,
+            [&mut 1, &mut 2, &mut 3, &mut 4, &mut 5, &mut 6, &mut 7, &mut 8]
+        );
+    }
+
+    #[test]
+    fn iter_mut_middle() {
+        let mut ll = LinkedList::default();
+        ll.push_front(4);
+        ll.push_front(3);
+        ll.push_front(2);
+        ll.push_front(1);
+        ll.push_back(5);
+        ll.push_back(6);
+        ll.push_back(7);
+        ll.push_back(8);
+
+        let mut vec = vec![];
+        let mut iter = ll.iter();
+        for x in iter.by_ref().take(4) {
+            vec.push(x);
+        }
+        for x in iter.rev() {
+            vec.push(x);
+        }
+
+        assert_eq!(
+            vec,
+            [&mut 1, &mut 2, &mut 3, &mut 4, &mut 8, &mut 7, &mut 6, &mut 5]
+        );
     }
 
     #[test]
